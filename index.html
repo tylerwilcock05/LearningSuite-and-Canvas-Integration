@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="Assignment Pulse - Aggregated assignment dashboard for Learning Suite and Canvas with offline iCal support, multi-select, and dark mode.">
+  <meta name="theme-color" content="#4f46e5">
+
+  <script>
+    // Force unregister stale PWA Service Workers & clear cache storage
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        for (let r of regs) { r.unregister(); }
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then(function(names) {
+        for (let n of names) { caches.delete(n); }
+      });
+    }
+  </script>
+
+  <title>Assignment Pulse - Learning Suite & Canvas Aggregator</title>
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="index.css?v=1.1.0">
+</head>
+<body>
+
+  <!-- App Sticky Header -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <h1 class="brand-title">Assignment Pulse</h1>
+    </div>
+
+    <div class="header-actions">
+      <button type="button" id="installAppBtn" class="btn-secondary" style="display: none;" title="Install Progressive Web App">
+        📲 Install App
+      </button>
+
+      <button type="button" id="exportBtn" class="btn-secondary" title="Export assignments as .ics file">
+        ⬇️ Export
+      </button>
+
+      <button type="button" id="addFeedsBtn" class="btn-secondary" title="Add iCal Feeds or Sign In">
+        ⚙️ <span id="profileLabel">Guest</span>
+      </button>
+
+      <span id="syncStatusIndicator" title="Feed sync status" style="font-size: 0.78rem; color: var(--text-muted); display: none; align-items: center; gap: 0.3rem;"></span>
+
+      <button type="button" id="themeToggleBtn" class="icon-btn" title="Toggle Theme">
+        🌙
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="app-container">
+
+    <!-- File Drop Zone & Upload Banner -->
+    <div id="fileDropZone" style="border: 2px dashed var(--border-color); background: var(--bg-secondary); border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; text-align: center; margin-bottom: 1.5rem; cursor: pointer; transition: all 0.2s ease;">
+      <p style="font-weight: 600; color: var(--text-primary); font-size: 0.95rem; margin-bottom: 0.25rem;">
+        📂 Drop your <code>.ics</code> files here or click to browse
+      </p>
+      <p style="font-size: 0.8rem; color: var(--text-muted);">
+        Supports exported Canvas and BYU Learning Suite calendar files for 100% offline usage.
+      </p>
+      <input type="file" id="fileInput" accept=".ics" multiple style="display: none;">
+    </div>
+
+    <!-- Filters & Search Controls -->
+    <section class="filter-bar">
+      <div class="search-and-view">
+        <div class="search-input-wrapper">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="searchInput" class="search-input" placeholder="Search assignments or courses...">
+        </div>
+
+        <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;">
+          <div class="view-segmented-control">
+            <button type="button" id="viewActiveBtn" class="segment-btn active">Active</button>
+            <button type="button" id="viewCompletedBtn" class="segment-btn">Completed</button>
+          </div>
+
+          <div class="view-segmented-control">
+            <button type="button" id="layoutRowsBtn" class="segment-btn active" title="Single-column row list view">☰ Rows</button>
+            <button type="button" id="layoutGridBtn" class="segment-btn" title="Multi-column grid view">⣿ Grid</button>
+            <button type="button" id="layoutCalendarBtn" class="segment-btn" title="Interactive schedule calendar view">📅 Calendar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dynamic Course Filter Pills -->
+      <div id="coursePillsContainer" class="course-pills">
+        <button type="button" class="course-pill active">All Courses</button>
+      </div>
+    </section>
+
+    <!-- Main Assignments Grid -->
+    <section id="assignmentsGrid" class="assignments-grid">
+      <!-- Dynamic Assignment Cards inserted here -->
+    </section>
+
+    <!-- Empty State Container -->
+    <div id="emptyState" class="empty-state" style="display: none;">
+      <div class="empty-icon">🎉</div>
+      <p class="empty-text">No active assignments found!</p>
+      <p style="font-size: 0.88rem; margin-top: 0.4rem; color: var(--text-muted);">
+        Drop an <code>.ics</code> file above or click <strong>Settings</strong> to add your Canvas & Learning Suite feed URLs.
+      </p>
+    </div>
+
+  </main>
+
+  <!-- Floating Selection Toolbar (Bottom) -->
+  <div id="floatingToolbar" class="floating-toolbar">
+    <span id="selectedCountText" class="selected-count">0 selected</span>
+    <button type="button" id="selectAllBtn" class="toolbar-btn">Select All</button>
+    <button type="button" id="markDoneBtn" class="toolbar-btn toolbar-btn-done">Mark as Done</button>
+    <button type="button" id="clearSelectionBtn" class="toolbar-btn">Cancel</button>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Feeds & Course Management Settings Modal -->
+  <div id="feedsModal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 600px; max-height: 88vh; overflow-y: auto;">
+      <h2 class="modal-title">Settings & Course Management</h2>
+      <p class="modal-subtitle">Add your Canvas and Learning Suite feeds below. Added courses will appear right here so you can rename them and pick custom colors!</p>
+
+      <div class="form-group">
+        <label class="form-label" for="profileNameInput">Profile Name (Optional Sign-In)</label>
+        <input type="text" id="profileNameInput" class="form-input" placeholder="e.g. Tyler (Leave blank for Guest)">
+      </div>
+
+      <!-- Canvas Feed Section -->
+      <div style="border-top: 1px solid var(--border-color); padding-top: 1.25rem; margin-top: 1.25rem;">
+        <h3 style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--accent-primary);">
+          🎨 Canvas Feed & Course Styling
+        </h3>
+
+        <div class="form-group">
+          <label class="form-label" for="canvasUrlInput">Canvas iCal Feed URL (or paste .ics text)</label>
+          <div style="display: flex; gap: 0.5rem;">
+            <input type="text" id="canvasUrlInput" class="form-input" placeholder="https://byu.instructure.com/feeds/calendars/user_...ics">
+            <button type="button" id="addCanvasFeedBtn" class="btn-primary" style="white-space: nowrap;">➕ Add Canvas Feed</button>
+          </div>
+        </div>
+
+        <!-- Detected Canvas Courses List -->
+        <div id="canvasCoursesContainer" style="margin-top: 0.75rem;">
+          <label class="form-label">Your Canvas Courses:</label>
+          <div id="canvasCoursesList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <p style="font-size: 0.85rem; color: var(--text-muted);">No Canvas courses added yet. Paste your Canvas iCal feed URL above and click "➕ Add Canvas Feed".</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Learning Suite Feed Section -->
+      <div style="border-top: 1px solid var(--border-color); padding-top: 1.25rem; margin-top: 1.25rem;">
+        <h3 style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.75rem; color: #10b981;">
+          📚 BYU Learning Suite Courses
+        </h3>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.85rem;">
+          Learning Suite exports calendar feeds one course at a time. Add each course feed below:
+        </p>
+
+        <!-- Add Individual LS Course Form -->
+        <div style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1rem; margin-bottom: 1rem;">
+          <div class="form-group" style="margin-bottom: 0.6rem;">
+            <label class="form-label" for="addLsCourseName">Course Name / Code</label>
+            <input type="text" id="addLsCourseName" class="form-input" placeholder="e.g. REL 250, WRTG 150">
+          </div>
+          <div class="form-group" style="margin-bottom: 0.75rem;">
+            <label class="form-label" for="addLsCourseUrl">Course iCal Feed URL (or paste .ics text)</label>
+            <input type="text" id="addLsCourseUrl" class="form-input" placeholder="https://learningsuite.byu.edu/iCal/course_...ics">
+          </div>
+          <button type="button" id="addLsCourseBtn" class="btn-primary" style="width: 100%; background: linear-gradient(135deg, #10b981, #059669);">
+            ➕ Add Learning Suite Course
+          </button>
+        </div>
+
+        <!-- Added LS Courses List -->
+        <div id="lsCoursesContainer">
+          <label class="form-label">Your Learning Suite Courses:</label>
+          <div id="lsCoursesList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <p style="font-size: 0.85rem; color: var(--text-muted);">No Learning Suite courses added yet.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Uploaded .ics File Section -->
+      <div style="border-top: 1px solid var(--border-color); padding-top: 1.25rem; margin-top: 1.25rem;">
+        <h3 style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.75rem; color: #f59e0b;">
+          📁 Upload Calendar File (.ics)
+        </h3>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+          Import any downloaded <code>.ics</code> calendar file directly into your workspace:
+        </p>
+        <div>
+          <input type="file" id="modalIcsFileInput" accept=".ics" style="display: none;">
+          <button type="button" id="modalUploadIcsBtn" class="btn-primary" style="width: 100%; background: linear-gradient(135deg, #f59e0b, #d97706); display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+            📁 Choose & Upload .ics File
+          </button>
+        </div>
+
+        <!-- Uploaded Courses Customization List -->
+        <div id="uploadedCoursesContainer" style="margin-top: 1rem;">
+          <label class="form-label">Your Uploaded / File Courses & Styling:</label>
+          <div id="uploadedCoursesList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <p style="font-size: 0.85rem; color: var(--text-muted);">No uploaded .ics courses yet.</p>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- Undated Assignments Setting -->
+      <div style="margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border-color);">
+        <label style="display: flex; align-items: flex-start; gap: 0.75rem; cursor: pointer; user-select: none;">
+          <input type="checkbox" id="toggleShowUndatedCheckbox" style="width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent-primary); cursor: pointer;">
+          <div>
+            <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">Show Learning Suite assignments with no due date</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">By default, assignments without a due date are hidden automatically. Check this box to display them.</div>
+          </div>
+        </label>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1.25rem; flex-wrap: wrap; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+        <button type="button" id="continueGuestBtn" class="btn-secondary">Continue as Guest</button>
+        <button type="button" id="saveFeedsBtn" class="btn-primary">Done</button>
+        <button type="button" id="closeFeedsModalBtn" class="btn-secondary" style="margin-left: auto;">✕ Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Modal -->
+  <div id="exportModal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 420px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem;">
+        <h2 class="modal-title" style="margin: 0;">⬇️ Export Assignments</h2>
+        <button type="button" id="closeExportModalBtn" class="icon-btn" style="width: 32px; height: 32px; font-size: 0.85rem;">✕</button>
+      </div>
+
+      <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+        Download all your assignments as a single <code>.ics</code> calendar file — importable into Apple Calendar, Google Calendar, Outlook, and more.
+      </p>
+
+      <div style="display: flex; flex-direction: column; gap: 0.65rem; margin-bottom: 1.5rem;">
+        <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; padding: 0.85rem 1rem; border: 2px solid var(--accent-primary); border-radius: var(--radius-md); background: var(--accent-primary-light);">
+          <input type="radio" id="exportOptUncompleted" name="exportScope" value="uncompleted" checked style="accent-color: var(--accent-primary); width: 16px; height: 16px;">
+          <div>
+            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-primary);">Active assignments only</div>
+            <div style="font-size: 0.78rem; color: var(--text-muted);">Exports only assignments you haven't marked as done</div>
+          </div>
+        </label>
+
+        <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; padding: 0.85rem 1rem; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-secondary);">
+          <input type="radio" id="exportOptAll" name="exportScope" value="all" style="accent-color: var(--accent-primary); width: 16px; height: 16px;">
+          <div>
+            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-primary);">All assignments</div>
+            <div style="font-size: 0.78rem; color: var(--text-muted);">Exports every assignment including completed ones</div>
+          </div>
+        </label>
+      </div>
+
+      <div id="exportSummaryLine" style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem; min-height: 1.2em;"></div>
+
+      <button type="button" id="confirmExportBtn" class="btn-primary" style="width: 100%;">
+        ⬇️ Download .ics File
+      </button>
+    </div>
+  </div>
+
+  <!-- Assignment Details Pop-Up Modal -->
+  <div id="assignmentDetailsModal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 540px;">
+      <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 0.75rem;">
+        <span id="modalCourseBadge" class="course-badge">Course</span>
+        <button type="button" id="closeDetailsModalBtn" class="icon-btn" style="width: 32px; height: 32px; font-size: 0.85rem;">✕</button>
+      </div>
+
+      <h2 id="modalAssignmentTitle" class="modal-title" style="margin-bottom: 0.5rem; line-height: 1.3;">Assignment Title</h2>
+      <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; flex-wrap: wrap;">
+        <span id="modalDueBadge" class="due-badge due-today">Due Date</span>
+        <span id="modalSourceTag" class="source-tag">Source</span>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label class="form-label">Description & Instructions</label>
+        <div id="modalAssignmentDescription" style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1rem; font-size: 0.9rem; color: var(--text-primary); max-height: 240px; overflow-y: auto;">
+          No description provided for this assignment.
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; justify-content: space-between; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+        <a id="modalExternalLinkBtn" href="#" target="_blank" rel="noopener noreferrer" class="btn-secondary" style="color: var(--accent-primary);">
+          Open Source ↗
+        </a>
+        <button type="button" id="modalToggleDoneBtn" class="btn-primary" style="background: linear-gradient(135deg, #10b981, #059669);">
+          Mark as Done
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="ical-parser.js?v=1.1.5"></script>
+  <script src="app.js?v=1.1.5"></script>
+</body>
+</html>
